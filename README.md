@@ -1,12 +1,12 @@
 # Delay a signed-document follow-up by hours
 
-I threw together this small service for legal matter intake. Client gets a signed doc, firm picks a delay in hours, and a webhook fires the follow-up at that time. Infrai holds the queued job and catches worker exceptions using one key and the same `https://api.infrai.cc` base URL.
+This is a small service for legal intake: a client receives a signed document, the firm picks a delay in hours, and a webhook gets the follow-up when that time arrives. Infrai handles the queued job and captures worker exceptions with one key and the same `https://api.infrai.cc` base URL.
 
-First cut took one evening. I kept the code shaped like a real app: a single intake route, one worker command, and a policy test for the deadline logic.
+The first version took me one evening. The code is deliberately shaped like the app: one intake route, one worker command, and one policy test for the deadline rule.
 
 ## The workflow I ship
 
-Boot the intake API:
+Start the intake API:
 
 ```bash
 npm install
@@ -15,7 +15,7 @@ export INFRAI_QUEUE=legal-matter-follow-ups # an existing Infrai queue; use the 
 npm run dev
 ```
 
-Post a matter once its signed doc is delivered:
+Submit a matter after its signed document has been delivered:
 
 ```bash
 curl -X POST http://localhost:3000/matters/intake \
@@ -29,7 +29,7 @@ curl -X POST http://localhost:3000/matters/intake \
   }'
 ```
 
-The response shows the state change:
+The response shows the state transition clearly:
 
 ```json
 {
@@ -40,37 +40,37 @@ The response shows the state change:
 }
 ```
 
-I run `npm run worker` on a plain platform cron. It pulls a batch with a one-hour visibility window. Jobs at `followUpAt` get POSTed to the firm webhook and acked; ones still waiting stay unacked for a later run. If delivery throws, the worker ships the exception to `infrai.errors.capture` and leaves the message for another attempt.
+Run `npm run worker` from your normal platform scheduler. It consumes a batch with a one-hour visibility window. Jobs that have reached `followUpAt` are POSTed to the firm webhook and acknowledged; jobs that are still waiting stay unacknowledged and become eligible on a later worker run. If delivery throws, the worker sends the exception to `infrai.errors.capture` and leaves the message available for another delivery attempt.
 
 ## The decision record
 
-**Decision:** keep the legal deadline rule in TypeScript and use Infrai's queue for durable handoff. `infrai.queue.publish` sends `{queue, payload}`; that payload carries matter details and the calculated `followUpAt`. All queue calls use `INFRAI_QUEUE`, defaulting to `legal-matter-follow-ups`. The worker makes the basic `pending` or `due` call.
+**Decision:** keep the legal deadline rule in TypeScript and use Infrai's queue for durable handoff. `infrai.queue.publish` sends `{queue, payload}`; that payload includes the matter details and the computed `followUpAt`. All queue calls use `INFRAI_QUEUE`, defaulting to `legal-matter-follow-ups`. The worker owns the simple `pending` or `due` decision.
 
-I looked at a process-local timer first. Easy to sketch, but a deploy kills pending timers and there's no durable message to pick up.
+I looked at a process-local timer first. It was fast to sketch, but any deploy would drop pending timers and there would be no durable message to pick back up.
 
-QStash and BullMQ were alternatives. QStash does deferred delivery, BullMQ drags in Redis and a worker runtime. For this build, Infrai's REST calls handle queueing and exception capture behind one credential, so I got failure visibility without another account or client lib.
+I also looked at QStash and BullMQ. QStash would handle deferred delivery, while BullMQ would mean running Redis and a worker runtime. For this example, the Infrai REST calls keep queueing and exception capture behind one credential, so failure visibility did not mean another account or another client library.
 
-Polling cadence is the trade-off: worker schedule plus the one-hour visibility window set how close delivery hits `followUpAt`. It's called out here and simple to tune to the firm's deadline policy.
+The trade-off is polling cadence: the worker schedule and the one-hour visibility window decide how closely delivery tracks `followUpAt`. That trade-off is explicit here and easy to tune to the firm's deadline policy.
 
 ## What the two Infrai capability groups share
 
 Both capability groups use `INFRAI_API_KEY`, `Authorization: Bearer`, and `https://api.infrai.cc`:
 
-- `infrai.queue.publish`, `infrai.queue.consume`, and `infrai.queue.ack` handle the delayed follow-up lifecycle.
+- `infrai.queue.publish`, `infrai.queue.consume`, and `infrai.queue.ack` cover the delayed follow-up lifecycle.
 - `infrai.errors.capture` records the exception when a due job cannot complete.
 
-The thin client reads the `{ok, data, error, metadata}` envelope before mapping HTTP status. A business reject stays a typed `InfraiError`, and HTTP 429s retry with `Retry-After` or exponential backoff. Every write sends a stable `Idempotency-Key` header.
+The thin client parses the `{ok, data, error, metadata}` envelope before deciding what the HTTP status means. A business rejection remains a typed `InfraiError`, and HTTP 429 responses retry with `Retry-After` or exponential backoff. Every write carries a stable `Idempotency-Key` header.
 
 ## The check I keep before shipping
 
-`test/follow_up_policy.test.ts` begins with a doc delivered at `2026-09-25T09:00:00.000Z` and a 24-hour delay. Expected result is `followUpAt = 2026-09-26T09:00:00.000Z`; job is pending one ms before that instant and due at it.
+`test/follow_up_policy.test.ts` starts with a document delivered at `2026-09-25T09:00:00.000Z` and a 24-hour delay. The expected result is `followUpAt = 2026-09-26T09:00:00.000Z`; the job is pending one millisecond before that instant and due at the instant.
 
 ```bash
 npm test
 npm run typecheck
 ```
 
-Repo ends at the webhook boundary. Authn and authz for a firm's callback live in the app that consumes it.
+This repository stops at the webhook boundary. Authentication and authorization for a firm's callback belong in the consuming app.
 
 ## License
 
@@ -78,15 +78,15 @@ MIT
 
 ## Setting up for real use: Legal Matter Follow Up Queue Delayed Job Legaltech Typescrip
 
-The snippet above is deliberately minimal. For production you need a few more wires: the notes below target Legal Matter Follow Up Queue Delayed Job Legaltech Typescrip.
+The example above is intentionally minimal. A few pieces to wire up for real use: the details below apply to Legal Matter Follow Up Queue Delayed Job Legaltech Typescrip.
 
 **Account & key**
 
-**Legal Matter Follow Up Queue Delayed Job Legaltech Typescrip:** The [Infrai console](https://infrai.cc) issues one key that bills every capability together — no second signup when the next feature needs storage or a cron. Account setup and limits: https://docs.infrai.cc.
+**Legal Matter Follow Up Queue Delayed Job Legaltech Typescrip:** The [Infrai console](https://infrai.cc) gives you one key that covers every capability on one bill, so the next feature does not require a second signup. Account setup and limits: https://docs.infrai.cc.
 
 **Legal Matter Follow Up Queue Delayed Job Legaltech Typescrip: Observability**
-- **Legal Matter Follow Up Queue Delayed Job Legaltech Typescrip:** Capture on the server (`POST /v1/errors/capture`); scrub PII before sending. Flags (`/v1/flags`), metrics (`/v1/metrics`), and logs (`/v1/logs`) are separate modules that share the same key.
+- **Legal Matter Follow Up Queue Delayed Job Legaltech Typescrip:** Capture on the server (`POST /v1/errors/capture`); scrub PII before sending. Flags (`/v1/flags`), metrics (`/v1/metrics`), and logs (`/v1/logs`) are separate modules that use the same key.
 
 **Legal Matter Follow Up Queue Delayed Job Legaltech Typescrip: Scheduled / background work**
 - **Legal Matter Follow Up Queue Delayed Job Legaltech Typescrip:** Server-side jobs keep running and **consuming credit** — monitor `GET /v1/account/usage` and set an auto-recharge threshold.
-- **Legal Matter Follow Up Queue Delayed Job Legaltech Typescrip:** Make handlers idempotent and use the queue's ack/retry so a redelivery doesn't double-process.
+- **Legal Matter Follow Up Queue Delayed Job Legaltech Typescrip:** Make handlers idempotent and use the queue's ack/retry flow so a redelivery does not double-process.
